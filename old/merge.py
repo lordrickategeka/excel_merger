@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import datetime
 import re
+from core.header_similarity import HeaderSimilarityAnalyzer
 
 class ExcelMerger:
     def __init__(self):
@@ -14,14 +15,16 @@ class ExcelMerger:
         self.all_dataframes = {}  # Store individual dataframes for lookup
         self.skipped_files = []  # Store files that couldn't be processed
         self.processed_folders = {}  # Track which folders were processed
+        self.current_sheets = {}  # Store sheets for column merging
+        self.header_analyzer = HeaderSimilarityAnalyzer()  # For analyzing similar headers
         
     def select_folder(self):
         """Let user select the folder containing Excel files"""
-        self.input_folder = filedialog.askdirectory(title="Select Root Folder with Excel/CSV Files")
+        self.input_folder = filedialog.askdirectory(title="Select Root Folder with Excel/CSV/Text Files")
         return self.input_folder
     
     def analyze_folder_recursive(self):
-        """Analyze the folder and subfolders recursively for Excel and CSV files"""
+        """Analyze the folder and subfolders recursively for Excel, CSV, and text files"""
         if not self.input_folder:
             return None
         
@@ -33,8 +36,8 @@ class ExcelMerger:
             folder_files = []
             
             for file in filenames:
-                # Include both Excel and CSV files
-                if file.endswith(('.xlsx', '.xls', '.xlsm', '.csv')):
+                # Include Excel, CSV, and TXT files
+                if file.endswith(('.xlsx', '.xls', '.xlsm', '.csv', '.txt')):
                     full_path = os.path.join(root, file)
                     files.append(full_path)
                     folder_files.append(file)
@@ -54,7 +57,7 @@ class ExcelMerger:
         }
     
     def merge_files(self, analysis):
-        """Merge all Excel and CSV files in the folder"""
+        """Merge all Excel, CSV, and text files in the folder"""
         if not analysis or analysis['file_count'] == 0:
             return False
             
@@ -80,6 +83,44 @@ class ExcelMerger:
                     
                     # Store for lookup
                     self.all_dataframes[f"{rel_folder}|{file_name}|CSV"] = df
+                elif file_path.lower().endswith('.txt'):
+                    # Read text file with various delimiters
+                    # Try to detect delimiter by reading first few lines
+                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                        sample = ''.join([f.readline() for _ in range(5)])
+                    
+                    # Try to guess the delimiter
+                    delimiter = None
+                    for potential_delim in [',', '\t', '|', ';', ' ']:
+                        if potential_delim in sample:
+                            counts = sample.count(potential_delim)
+                            if counts > 2:  # At least need a few occurrences
+                                delimiter = potential_delim
+                                break
+                    
+                    if delimiter:
+                        # Try pandas read_csv with the detected delimiter
+                        df = pd.read_csv(file_path, delimiter=delimiter, engine='python', error_bad_lines=False)
+                    else:
+                        # If delimiter detection fails, try to read it as a fixed-width or space-delimited file
+                        df = pd.read_fwf(file_path)
+                    
+                    # If we have only one column, it might be unstructured text - convert to dataframe
+                    if len(df.columns) == 1:
+                        # Read raw text and create a proper dataframe
+                        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                            lines = f.readlines()
+                        
+                        # Create dataframe with lines as rows
+                        df = pd.DataFrame({'Text_Content': lines})
+                    
+                    df['Source_File'] = file_name
+                    df['Source_Folder'] = rel_folder
+                    df['Sheet_Name'] = 'TXT'  # Text files don't have sheets
+                    all_data.append(df)
+                    
+                    # Store for lookup
+                    self.all_dataframes[f"{rel_folder}|{file_name}|TXT"] = df
                 else:
                     # Read Excel file with multiple sheets
                     xls = pd.ExcelFile(file_path)
@@ -541,197 +582,150 @@ class ExcelMerger:
         # Bind double-click
         results_tree.bind("<Double-1>", on_double_click)
 
-def main():
-    # Create the main window but hide it
-    root = tk.Tk()
-    root.withdraw()
-    
-    merger = ExcelMerger()
-    
-    # Create a simple menu
-    menu_window = tk.Toplevel(root)
-    menu_window.title("Excel & CSV File Merger")
-    menu_window.geometry("320x350")
-    menu_window.resizable(False, False)
-    
-    # Center the window
-    window_width = 320
-    window_height = 350
-    screen_width = menu_window.winfo_screenwidth()
-    screen_height = menu_window.winfo_screenheight()
-    x = (screen_width / 2) - (window_width / 2)
-    y = (screen_height / 2) - (window_height / 2)
-    menu_window.geometry(f"{window_width}x{window_height}+{int(x)}+{int(y)}")
-    
-    # Frame for buttons
-    button_frame = ttk.Frame(menu_window, padding="20")
-    button_frame.pack(expand=True)
-    
-    # Style for buttons
-    s = ttk.Style()
-    s.configure('Big.TButton', font=('Helvetica', 12))
-    
-    # Status variable
-    status_var = tk.StringVar(value="Ready")
-    
-    # Buttons
-    ttk.Button(
-        button_frame, 
-        text="Merge Excel & CSV Files", 
-        command=lambda: process_files(merger, menu_window, status_var),
-        style='Big.TButton',
-        width=25
-    ).pack(pady=10)
-    
-    ttk.Button(
-        button_frame, 
-        text="Lookup Data", 
-        command=lambda: lookup_data(merger, menu_window, status_var),
-        style='Big.TButton',
-        width=25
-    ).pack(pady=10)
-    
-    ttk.Button(
-        button_frame, 
-        text="Show Folder Summary", 
-        command=lambda: show_folders(merger, status_var),
-        style='Big.TButton',
-        width=25
-    ).pack(pady=10)
-    
-    ttk.Button(
-        button_frame, 
-        text="Show Skipped Files", 
-        command=lambda: show_skipped(merger, status_var),
-        style='Big.TButton',
-        width=25
-    ).pack(pady=10)
-    
-    ttk.Button(
-        button_frame, 
-        text="Exit", 
-        command=root.destroy,
-        style='Big.TButton',
-        width=25
-    ).pack(pady=10)
-    
-    # Status bar
-    status_bar = ttk.Label(menu_window, textvariable=status_var, relief="sunken", anchor="w")
-    status_bar.pack(side="bottom", fill="x")
-    
-    # Prevent closing the root window directly
-    root.protocol("WM_DELETE_WINDOW", lambda: None)
-    menu_window.protocol("WM_DELETE_WINDOW", root.destroy)
-    
-    # Functions for menu commands
-    def process_files(merger, window, status):
-        status.set("Selecting folder...")
-        
-        # Select folder
-        folder = merger.select_folder()
-        if not folder:
-            status.set("No folder selected")
-            return
-        
-        status.set("Analyzing folders recursively...")
-        
-        # Analyze folder and subfolders
-        analysis = merger.analyze_folder_recursive()
-        if not analysis or analysis['file_count'] == 0:
-            messagebox.showerror("Error", "No Excel or CSV files found in the selected folders.")
-            status.set("No files found")
-            return
-        
-        # Show analysis
-        messagebox.showinfo(
-            "Folder Analysis", 
-            f"Found {analysis['file_count']} Excel/CSV files in {len(merger.processed_folders)} folders/subfolders"
-        )
-        
-        status.set(f"Processing {analysis['file_count']} files...")
-        
-        # Merge files
-        if merger.merge_files(analysis):
-            status.set("Files merged, saving...")
-            
-            # Report skipped files if any
-            if merger.skipped_files:
-                status.set(f"Files merged with {len(merger.skipped_files)} skipped files")
-                messagebox.showwarning(
-                    "Warning", 
-                    f"{len(merger.skipped_files)} files could not be processed. Click 'Show Skipped Files' to see details."
-                )
-            
-            # Save merged file
-            output_file = merger.save_merged_file()
-            if output_file:
-                messagebox.showinfo("Success", f"Merged file saved as:\n{output_file}")
-                
-                # Ask if the user wants to open the file
-                if messagebox.askyesno("Open File", "Do you want to open the merged file?"):
-                    os.startfile(output_file) if os.name == 'nt' else os.system(f"xdg-open {output_file}")
-                
-                status.set(f"Saved to {os.path.basename(output_file)}")
-                
-                # Ask if they want to see folder summary
-                if len(merger.processed_folders) > 1:
-                    if messagebox.askyesno("Folder Summary", "Do you want to see the folder summary?"):
-                        merger.show_folder_summary()
-            else:
-                status.set("Save cancelled")
-        else:
-            messagebox.showerror("Error", "Failed to merge files.")
-            status.set("Merge failed")
-    
-    def lookup_data(merger, window, status):
-        if not merger.all_dataframes:
-            # No data loaded, need to select and process files first
-            status.set("Loading data for lookup...")
-            
-            # Select folder
-            folder = merger.select_folder()
+    # New method for loading Excel files in a specific folder for column merging
+    def load_excel_files_for_merging(self, folder=None):
+        """Load Excel files from a folder for column merging operations"""
+        if folder is None:
+            folder = filedialog.askdirectory(title="Select Folder with Excel Files to Merge")
             if not folder:
-                status.set("No folder selected")
-                return
-            
-            # Analyze folder recursively
-            analysis = merger.analyze_folder_recursive()
-            if not analysis or analysis['file_count'] == 0:
-                messagebox.showerror("Error", "No Excel or CSV files found in the selected folders.")
-                status.set("No files found")
-                return
-                
-            # Process files for lookup (don't merge yet)
-            if not merger.merge_files(analysis):
-                messagebox.showerror("Error", "Failed to process files for lookup.")
-                status.set("Processing failed")
-                return
-                
-            status.set(f"Loaded {analysis['file_count']} files for lookup")
+                return False
         
-        # Open lookup window
-        merger.perform_lookup()
+        # Reset current sheets
+        self.current_sheets = {}
+        
+        # Find all Excel files in the folder (non-recursive)
+        excel_files = [os.path.join(folder, f) for f in os.listdir(folder) 
+                     if f.endswith(('.xlsx', '.xls', '.xlsm')) and os.path.isfile(os.path.join(folder, f))]
+        
+        if not excel_files:
+            messagebox.showinfo("No Files Found", "No Excel files found in the selected folder.")
+            return False
+            
+        # Load each Excel file
+        for file_path in excel_files:
+            file_name = os.path.basename(file_path)
+            try:
+                # Read all sheets from the Excel file
+                xls = pd.ExcelFile(file_path)
+                
+                # Process each sheet
+                for sheet_name in xls.sheet_names:
+                    sheet_key = f"{file_name}_{sheet_name}"
+                    self.current_sheets[sheet_key] = pd.read_excel(file_path, sheet_name=sheet_name)
+                    print(f"Loaded sheet: {sheet_key}")
+            except Exception as e:
+                print(f"Error loading {file_path}: {str(e)}")
+                messagebox.showwarning("Warning", f"Could not load {file_name}: {str(e)}")
+        
+        if not self.current_sheets:
+            messagebox.showinfo("No Data", "No valid Excel sheets were found or could be loaded.")
+            return False
+            
+        return True
     
-    def show_folders(merger, status):
-        if not merger.processed_folders:
-            status.set("No folders processed yet")
-            messagebox.showinfo("Folder Summary", "No folders have been processed yet. Please merge files first.")
+    # Method to analyze similar columns across loaded sheets
+    def analyze_similar_columns(self):
+        """Analyze columns across all loaded sheets to find similar field names"""
+        if not self.current_sheets:
+            messagebox.showinfo("No Data", "No Excel sheets are currently loaded.")
+            return None
+            
+        # Collect all column names from all sheets
+        all_columns = {}
+        
+        for sheet_name, df in self.current_sheets.items():
+            all_columns[sheet_name] = list(df.columns)
+        
+        # Flatten the list of all columns for similarity analysis
+        flat_columns = []
+        for cols in all_columns.values():
+            flat_columns.extend(cols)
+            
+        # Use HeaderSimilarityAnalyzer to find similar columns
+        self.header_analyzer.set_similarity_threshold(0.7)  # Default threshold
+        results, suggestion_text = self.header_analyzer.analyze_and_suggest_merges(flat_columns)
+        
+        return {
+            'sheet_columns': all_columns,
+            'similarity_results': results,
+            'suggestion_text': suggestion_text
+        }
+    
+    # Method to merge columns across sheets
+    def merge_columns_across_sheets(self, column_mapping, output_column_name=None):
+        """
+        Merge similar columns from different sheets into a single dataset
+        
+        Args:
+            column_mapping: Dictionary mapping target column name to list of source columns
+            output_column_name: Name for the merged output column (defaults to first key in mapping)
+        
+        Returns:
+            DataFrame with merged data
+        """
+        if not self.current_sheets or not column_mapping:
+            return None
+            
+        if not output_column_name:
+            # Use the first key as the output column name
+            output_column_name = next(iter(column_mapping))
+            
+        # Create list to store dataframes with standardized column names
+        standardized_dfs = []
+        
+        for sheet_name, df in self.current_sheets.items():
+            # Create a copy to avoid modifying the original
+            new_df = df.copy()
+            
+            # Flag to track if this sheet has any of the target columns
+            has_target_column = False
+            
+            # Rename columns according to the mapping
+            for target_col, source_cols in column_mapping.items():
+                for source_col in source_cols:
+                    if source_col in df.columns:
+                        # Rename the source column to the target name
+                        new_df = new_df.rename(columns={source_col: target_col})
+                        has_target_column = True
+                        # Add sheet identifier column
+                        new_df['Source_Sheet'] = sheet_name
+                        break  # Only rename the first matching column in this sheet
+            
+            # Only add sheets that have at least one of the target columns
+            if has_target_column:
+                standardized_dfs.append(new_df)
+        
+        # Merge all dataframes
+        if standardized_dfs:
+            merged_df = pd.concat(standardized_dfs, ignore_index=True)
+            return merged_df
+        else:
+            return None
+    
+    # Method to show the column merge UI
+    def show_column_merge_ui(self):
+        """Show a UI for merging similar columns across sheets"""
+        # First load Excel files
+        if not self.load_excel_files_for_merging():
             return
             
-        status.set("Showing folder summary")
-        merger.show_folder_summary()
-    
-    def show_skipped(merger, status):
-        if not merger.skipped_files:
-            status.set("No skipped files")
-            messagebox.showinfo("Skipped Files", "No files were skipped during processing.")
+        # Analyze columns
+        analysis = self.analyze_similar_columns()
+        if not analysis:
             return
             
-        status.set(f"Showing {len(merger.skipped_files)} skipped files")
-        merger.show_skipped_files()
-    
-    # Start the application
-    root.mainloop()
-
-if __name__ == "__main__":
-    main()
+        # Create UI for column merging
+        merge_window = tk.Toplevel()
+        merge_window.title("Merge Similar Columns Across Sheets")
+        merge_window.geometry("800x600")
+        
+        # Create frames
+        top_frame = ttk.Frame(merge_window, padding="10")
+        top_frame.pack(fill="x")
+        
+        # Instructions
+        ttk.Label(
+            top_frame,
+            text="This tool identifies similar columns across sheets and merges them into a single dataset.",
+            wraplength=750
+        ).pack

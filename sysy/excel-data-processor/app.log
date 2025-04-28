@@ -1,0 +1,4 @@
+2025-04-22 21:34:40,542 - __main__ - CRITICAL - Failed to import required modules: cannot import name 'BaseStep' from 'src.gui.steps' (C:\Users\ricky\Desktop\excel_merger\sysy\excel-data-processor\src\gui\steps\__init__.py)
+2025-04-22 21:36:37,087 - __main__ - CRITICAL - Failed to import required modules: cannot import name 'DataLoader' from 'src.data.loader' (C:\Users\ricky\Desktop\excel_merger\sysy\excel-data-processor\src\data\loader.py)
+2025-04-22 21:36:47,189 - __main__ - CRITICAL - Failed to import required modules: cannot import name 'DataLoader' from 'src.data.loader' (C:\Users\ricky\Desktop\excel_merger\sysy\excel-data-processor\src\data\loader.py)
+2025-04-22 21:37:45,382 - __main__ - CRITICAL - Failed to import required modules: cannot import name 'DataPreviewFrame' from 'src.gui.widgets.data_preview' (C:\Users\ricky\Desktop\excel_merger\sysy\excel-data-processor\src\gui\widgets\data_preview.py)
